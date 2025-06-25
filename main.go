@@ -18,7 +18,22 @@ func reverseProxy(target string) http.HandlerFunc {
 			http.Error(w, "Bad target URL", http.StatusInternalServerError)
 			return
 		}
+
 		proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+		// Ghi đè Director để chỉnh path
+		originalDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			originalDirector(req)
+
+			// Xóa tiền tố "/stock" hoặc "/service-b"
+			if strings.HasPrefix(req.URL.Path, "/stock/") {
+				req.URL.Path = strings.TrimPrefix(req.URL.Path, "/stock")
+			} else if strings.HasPrefix(req.URL.Path, "/service-b/") {
+				req.URL.Path = strings.TrimPrefix(req.URL.Path, "/service-b")
+			}
+		}
+
 		proxy.ServeHTTP(w, r)
 	}
 }
@@ -63,7 +78,7 @@ func proxyWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// HTTP reverse proxy
-	http.HandleFunc("/stock/", reverseProxy("http://localhost:8001"))
+	http.HandleFunc("stock/", reverseProxy("http://localhost:8001"))
 	http.HandleFunc("/service-b/", reverseProxy("http://localhost:8002"))
 
 	// WebSocket proxy
