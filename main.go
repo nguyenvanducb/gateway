@@ -76,6 +76,6 @@ func main() {
 		}
 	})
 
-	log.Println("API Gateway chạy tại http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Println("API Gateway chạy tại http://localhost:80")
+	log.Fatal(http.ListenAndServe(":80", nil))
 }
