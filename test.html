@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>WebSocket Test</title>
+  </head>
+  <body>
+    <h2>WebSocket Test Client</h2>
+    <button onclick="connect()">Connect to WS</button>
+    <p id="output"></p>
+
+    <script>
+      function connect() {
+        const ws = new WebSocket("ws://localhost:8080/ws/echo");
+
+        ws.onopen = () => {
+          ws.send("Hello from browser!");
+        };
+
+        ws.onmessage = (msg) => {
+          document.getElementById("output").textContent =
+            "Received: " + msg.data;
+        };
+
+        ws.onerror = (e) => {
+          document.getElementById("output").textContent = "WebSocket error";
+        };
+
+        ws.onclose = () => {
+          console.log("WebSocket closed");
+        };
+      }
+    </script>
+  </body>
+</html>
