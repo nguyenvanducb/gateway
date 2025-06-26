@@ -78,7 +78,7 @@ func proxyWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// HTTP reverse proxy
-	http.HandleFunc("stock/", reverseProxy("http://localhost:8001"))
+	http.HandleFunc("/stock/", reverseProxy("http://localhost:8001"))
 	http.HandleFunc("/service-b/", reverseProxy("http://localhost:8002"))
 
 	// WebSocket proxy
