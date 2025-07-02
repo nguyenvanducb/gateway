@@ -40,13 +40,13 @@ func reverseProxy(target string) http.HandlerFunc {
 
 // Proxy WebSocket
 func proxyWebSocket(w http.ResponseWriter, r *http.Request) {
-	log.Printf("WS request to: %s\n", r.URL.Path)
+	log.Printf("🔄 WS request to: %s\n", r.URL.Path)
 
-	// Kết nối đến WebSocket backend
-	backendConn, err := net.Dial("tcp", "localhost:8003")
+	// Kết nối đến WebSocket backend trên port 9999
+	backendConn, err := net.Dial("tcp", "localhost:9999")
 	if err != nil {
 		http.Error(w, "WebSocket backend unavailable", http.StatusBadGateway)
-		log.Println("Dial error:", err)
+		log.Printf("❌ Dial error: %v\n", err)
 		return
 	}
 	defer backendConn.Close()
@@ -67,12 +67,23 @@ func proxyWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Forward request ban đầu đến backend (bao gồm header WebSocket)
 	err = r.Write(backendConn)
 	if err != nil {
-		log.Println("Error forwarding request:", err)
+		log.Printf("❌ Error forwarding request: %v\n", err)
 		return
 	}
 
+	log.Println("✅ WebSocket connection established")
+
 	// Gửi và nhận dữ liệu WebSocket
-	go io.Copy(backendConn, clientConn)
+	go func() {
+		defer func() {
+			log.Println("🔚 Client -> Backend connection closed")
+		}()
+		io.Copy(backendConn, clientConn)
+	}()
+
+	defer func() {
+		log.Println("🔚 Backend -> Client connection closed")
+	}()
 	io.Copy(clientConn, backendConn)
 }
 
@@ -81,16 +92,21 @@ func main() {
 	http.HandleFunc("/stock/", reverseProxy("http://localhost:8001"))
 	http.HandleFunc("/service-b/", reverseProxy("http://localhost:8002"))
 
-	// WebSocket proxy
-	http.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
+	// WebSocket proxy handler
+	wsHandler := func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") &&
 			strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
 			proxyWebSocket(w, r)
 		} else {
 			http.Error(w, "Not a WebSocket request", http.StatusBadRequest)
 		}
-	})
+	}
 
-	log.Println("API Gateway chạy tại http://localhost:80")
+	// Route cho WebSocket - chỉ cần 1 pattern
+	http.HandleFunc("/ws", wsHandler)  // Match chính xác /ws
+	http.HandleFunc("/ws/", wsHandler) // Match /ws/ và sub-paths
+
+	log.Println("🚀 API Gateway chạy tại http://localhost:80")
+	log.Println("📡 WebSocket proxy: ws://localhost:80/ws -> ws://localhost:9999/ws")
 	log.Fatal(http.ListenAndServe(":80", nil))
 }
