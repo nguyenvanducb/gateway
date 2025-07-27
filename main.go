@@ -106,7 +106,8 @@ func main() {
 	http.HandleFunc("/ws", wsHandler)  // Match chính xác /ws
 	http.HandleFunc("/ws/", wsHandler) // Match /ws/ và sub-paths
 
-	log.Println("🚀 API Gateway chạy tại http://localhost:80")
-	log.Println("📡 WebSocket proxy: ws://localhost:80/ws -> ws://localhost:9999/ws")
-	log.Fatal(http.ListenAndServe(":80", nil))
+	log.Println("🚀 API Gateway chạy tại http://localhost:8080")
+	log.Println("📡 WebSocket proxy: ws://localhost:8080/ws -> ws://localhost:9999/ws")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+
 }
