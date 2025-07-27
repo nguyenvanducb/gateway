@@ -10,9 +10,31 @@ import (
 	"strings"
 )
 
-// Proxy HTTP thông thường
-func reverseProxy(target string) http.HandlerFunc {
+// CORS middleware
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		// Handle preflight OPTIONS request
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Continue to next handler
+		next(w, r)
+	}
+}
+
+// Proxy HTTP thông thường với CORS
+func reverseProxy(target string) http.HandlerFunc {
+	return corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("🔄 Proxy request: %s %s -> %s", r.Method, r.URL.Path, target)
+
 		targetURL, err := url.Parse(target)
 		if err != nil {
 			http.Error(w, "Bad target URL", http.StatusInternalServerError)
@@ -29,18 +51,31 @@ func reverseProxy(target string) http.HandlerFunc {
 			// Xóa tiền tố "/stock" hoặc "/service-b"
 			if strings.HasPrefix(req.URL.Path, "/stock/") {
 				req.URL.Path = strings.TrimPrefix(req.URL.Path, "/stock")
+				log.Printf("🔀 Path rewritten: %s", req.URL.Path)
 			} else if strings.HasPrefix(req.URL.Path, "/service-b/") {
 				req.URL.Path = strings.TrimPrefix(req.URL.Path, "/service-b")
+				log.Printf("🔀 Path rewritten: %s", req.URL.Path)
 			}
 		}
 
+		// Custom error handler
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Printf("❌ Proxy error: %v", err)
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			http.Error(w, "Backend service unavailable", http.StatusBadGateway)
+		}
+
 		proxy.ServeHTTP(w, r)
-	}
+	})
 }
 
 // Proxy WebSocket
 func proxyWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Printf("🔄 WS request to: %s\n", r.URL.Path)
+
+	// Set CORS headers for WebSocket
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 	// Kết nối đến WebSocket backend trên port 9999
 	backendConn, err := net.Dial("tcp", "localhost:9999")
@@ -87,8 +122,19 @@ func proxyWebSocket(w http.ResponseWriter, r *http.Request) {
 	io.Copy(clientConn, backendConn)
 }
 
+// Health check endpoint
+func healthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "healthy", "message": "API Gateway is running"}`))
+}
+
 func main() {
-	// HTTP reverse proxy
+	// Health check endpoint
+	http.HandleFunc("/health", corsMiddleware(healthCheck))
+
+	// HTTP reverse proxy with CORS
 	http.HandleFunc("/stock/", reverseProxy("http://localhost:8001"))
 	http.HandleFunc("/service-b/", reverseProxy("http://localhost:8002"))
 
@@ -106,8 +152,11 @@ func main() {
 	http.HandleFunc("/ws", wsHandler)  // Match chính xác /ws
 	http.HandleFunc("/ws/", wsHandler) // Match /ws/ và sub-paths
 
-	log.Println("🚀 API Gateway chạy tại http://localhost:8080")
+	log.Println("🚀 API Gateway chạy tại http://0.0.0.0:8080")
 	log.Println("📡 WebSocket proxy: ws://localhost:8080/ws -> ws://localhost:9999/ws")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Println("🏥 Health check: http://localhost:8080/health")
+	log.Println("🌐 CORS enabled for all origins")
 
+	// Bind to 0.0.0.0 để accept external connections
+	log.Fatal(http.ListenAndServe("0.0.0.0:8080", nil))
 }
