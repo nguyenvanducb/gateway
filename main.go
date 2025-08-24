@@ -141,9 +141,9 @@ func main() {
 	http.HandleFunc("/stock/", reverseProxy("http://localhost:8001"))
 	http.HandleFunc("/service-b/", reverseProxy("http://localhost:8002"))
 
-	// ✅ WebSocket proxy handlers
-	wsHandler9999 := createWSHandler("ws://localhost:9999")
-	wsHandler9998 := createWSHandler("ws://localhost:9998")
+	// ✅ WebSocket proxy handlers - SỬ DỤNG HTTP SCHEME
+	wsHandler9999 := createWSHandler("http://localhost:9999")
+	wsHandler9998 := createWSHandler("http://localhost:9998")
 
 	// ✅ WebSocket routes
 	http.HandleFunc("/ws", wsHandler9999)   // /ws -> port 9999
@@ -154,8 +154,8 @@ func main() {
 	// ✅ Logging thông tin khởi động
 	log.Println("🚀 API Gateway starting on http://0.0.0.0:8080")
 	log.Println("📊 Routes configured:")
-	log.Println("   📡 WebSocket: ws://localhost:8080/ws  -> ws://localhost:9999/ws")
-	log.Println("   📡 WebSocket: ws://localhost:8080/ws2 -> ws://localhost:9998/ws")
+	log.Println("   📡 WebSocket: ws://localhost:8080/ws  -> http://localhost:9999/ws")
+	log.Println("   📡 WebSocket: ws://localhost:8080/ws2 -> http://localhost:9998/ws")
 	log.Println("   🌐 HTTP: http://localhost:8080/stock/* -> http://localhost:8001/*")
 	log.Println("   🌐 HTTP: http://localhost:8080/service-b/* -> http://localhost:8002/*")
 	log.Println("   🏥 Health: http://localhost:8080/health")
