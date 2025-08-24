@@ -1,9 +1,7 @@
 package main
 
 import (
-	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -33,7 +31,7 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // Proxy HTTP thông thường với CORS
 func reverseProxy(target string) http.HandlerFunc {
 	return corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("🔄 Proxy request: %s %s -> %s", r.Method, r.URL.Path, target)
+		log.Printf("🔄 HTTP Proxy: %s %s -> %s", r.Method, r.URL.Path, target)
 
 		targetURL, err := url.Parse(target)
 		if err != nil {
@@ -60,7 +58,7 @@ func reverseProxy(target string) http.HandlerFunc {
 
 		// Custom error handler
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("❌ Proxy error: %v", err)
+			log.Printf("❌ HTTP Proxy error: %v", err)
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			http.Error(w, "Backend service unavailable", http.StatusBadGateway)
 		}
@@ -69,72 +67,45 @@ func reverseProxy(target string) http.HandlerFunc {
 	})
 }
 
-// Proxy WebSocket với port cụ thể
-func proxyWebSocket(backendPort string) http.HandlerFunc {
+// ✅ WebSocket proxy sử dụng httputil.ReverseProxy
+func websocketProxy(backendURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("🔄 WS request to: %s -> localhost:%s\n", r.URL.Path, backendPort)
+		log.Printf("🔄 WS Proxy: %s %s -> %s", r.Method, r.URL.Path, backendURL)
 
-		// Set CORS headers for WebSocket
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-		// Kết nối đến WebSocket backend
-		backendAddr := "localhost:" + backendPort
-		backendConn, err := net.Dial("tcp", backendAddr)
+		// Parse backend URL
+		targetURL, err := url.Parse(backendURL)
 		if err != nil {
+			http.Error(w, "Bad WebSocket target URL", http.StatusInternalServerError)
+			return
+		}
+
+		// Create reverse proxy
+		proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+		// Modify the director to handle WebSocket path
+		originalDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			originalDirector(req)
+
+			// Rewrite paths for WebSocket
+			if strings.HasPrefix(req.URL.Path, "/ws2") {
+				// /ws2 -> /ws (port 9998)
+				req.URL.Path = "/ws"
+				log.Printf("🔀 WS Path rewritten: %s", req.URL.Path)
+			} else if strings.HasPrefix(req.URL.Path, "/ws") {
+				// /ws stays /ws (port 9999)
+				req.URL.Path = "/ws"
+				log.Printf("🔀 WS Path: %s", req.URL.Path)
+			}
+		}
+
+		// Custom error handler for WebSocket
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Printf("❌ WebSocket proxy error: %v", err)
 			http.Error(w, "WebSocket backend unavailable", http.StatusBadGateway)
-			log.Printf("❌ Dial error to %s: %v\n", backendAddr, err)
-			return
-		}
-		defer backendConn.Close()
-
-		// Hijack kết nối client
-		hijacker, ok := w.(http.Hijacker)
-		if !ok {
-			http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
-			return
-		}
-		clientConn, _, err := hijacker.Hijack()
-		if err != nil {
-			http.Error(w, "Hijack failed", http.StatusInternalServerError)
-			return
-		}
-		defer clientConn.Close()
-
-		// Forward request ban đầu đến backend (bao gồm header WebSocket)
-		err = r.Write(backendConn)
-		if err != nil {
-			log.Printf("❌ Error forwarding request: %v\n", err)
-			return
 		}
 
-		log.Printf("✅ WebSocket connection established to port %s", backendPort)
-
-		// Gửi và nhận dữ liệu WebSocket
-		go func() {
-			defer func() {
-				log.Printf("🔚 Client -> Backend:%s connection closed", backendPort)
-			}()
-			io.Copy(backendConn, clientConn)
-		}()
-
-		defer func() {
-			log.Printf("🔚 Backend:%s -> Client connection closed", backendPort)
-		}()
-		io.Copy(clientConn, backendConn)
-	}
-}
-
-// WebSocket handler wrapper
-func createWSHandler(backendPort string) http.HandlerFunc {
-	wsProxy := proxyWebSocket(backendPort)
-	return func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") &&
-			strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
-			wsProxy(w, r)
-		} else {
-			http.Error(w, "Not a WebSocket request", http.StatusBadRequest)
-		}
+		proxy.ServeHTTP(w, r)
 	}
 }
 
@@ -146,31 +117,49 @@ func healthCheck(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status": "healthy", "message": "API Gateway is running"}`))
 }
 
+// ✅ WebSocket route handler với validation
+func createWSHandler(backendURL string) http.HandlerFunc {
+	wsProxy := websocketProxy(backendURL)
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Kiểm tra xem có phải WebSocket request không
+		if strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") &&
+			strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+			wsProxy(w, r)
+		} else {
+			// Nếu không phải WebSocket, trả về error thân thiện
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error": "WebSocket upgrade required"}`, http.StatusBadRequest)
+		}
+	}
+}
+
 func main() {
-	// Health check endpoint
+	// ✅ Health check endpoint
 	http.HandleFunc("/health", corsMiddleware(healthCheck))
 
-	// HTTP reverse proxy with CORS
+	// ✅ HTTP reverse proxy with CORS
 	http.HandleFunc("/stock/", reverseProxy("http://localhost:8001"))
 	http.HandleFunc("/service-b/", reverseProxy("http://localhost:8002"))
 
-	// WebSocket proxy handlers cho 2 backends
-	wsHandler9999 := createWSHandler("9999")
-	wsHandler9998 := createWSHandler("9998")
+	// ✅ WebSocket proxy handlers
+	wsHandler9999 := createWSHandler("ws://localhost:9999")
+	wsHandler9998 := createWSHandler("ws://localhost:9998")
 
-	// Routes cho WebSocket - port 9999 (default)
-	http.HandleFunc("/ws", wsHandler9999)  // Match chính xác /ws -> port 9999
-	http.HandleFunc("/ws/", wsHandler9999) // Match /ws/ và sub-paths -> port 9999
+	// ✅ WebSocket routes
+	http.HandleFunc("/ws", wsHandler9999)   // /ws -> port 9999
+	http.HandleFunc("/ws/", wsHandler9999)  // /ws/* -> port 9999
+	http.HandleFunc("/ws2", wsHandler9998)  // /ws2 -> port 9998
+	http.HandleFunc("/ws2/", wsHandler9998) // /ws2/* -> port 9998
 
-	// Routes cho WebSocket - port 9998
-	http.HandleFunc("/ws2", wsHandler9998)  // Match chính xác /ws2 -> port 9998
-	http.HandleFunc("/ws2/", wsHandler9998) // Match /ws2/ và sub-paths -> port 9998
-
-	log.Println("🚀 API Gateway chạy tại http://0.0.0.0:8080")
-	log.Println("📡 WebSocket proxy 1: ws://localhost:8080/ws -> ws://localhost:9999/ws")
-	log.Println("📡 WebSocket proxy 2: ws://localhost:8080/ws2 -> ws://localhost:9998/ws")
-	log.Println("🏥 Health check: http://localhost:8080/health")
-	log.Println("🌐 CORS enabled for all origins")
+	// ✅ Logging thông tin khởi động
+	log.Println("🚀 API Gateway starting on http://0.0.0.0:8080")
+	log.Println("📊 Routes configured:")
+	log.Println("   📡 WebSocket: ws://localhost:8080/ws  -> ws://localhost:9999/ws")
+	log.Println("   📡 WebSocket: ws://localhost:8080/ws2 -> ws://localhost:9998/ws")
+	log.Println("   🌐 HTTP: http://localhost:8080/stock/* -> http://localhost:8001/*")
+	log.Println("   🌐 HTTP: http://localhost:8080/service-b/* -> http://localhost:8002/*")
+	log.Println("   🏥 Health: http://localhost:8080/health")
+	log.Println("🔐 CORS enabled for all origins")
 
 	// Bind to 0.0.0.0 để accept external connections
 	log.Fatal(http.ListenAndServe("0.0.0.0:8080", nil))
